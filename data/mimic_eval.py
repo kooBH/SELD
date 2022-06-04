@@ -10,7 +10,7 @@ from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 
 import warnings
-warnings.filterwarnings('ignore')
+#warnings.filterwarnings('error') 
 """
 return _methods._mean(a, axis=axis, dtype=dtype,                                      
 /home/kiosk/anaconda3/envs/dnn/lib/python3.9/site-packages/numpy/core/_methods.py:189: RuntimeWarning: invalid value encountered in true_divide
@@ -99,14 +99,18 @@ def spread_ratio(
     label[:]=-1
 
     while not is_enough : 
-        # Load
-        path_data = list_audio[category][np.random.randint(len(list_audio[category]))]
-        data,_ = librosa.load(path_data,sr=sr)
+        len_data = 0
+        while len_data == 0 :
+            # Load
+            path_data = list_audio[category][np.random.randint(len(list_audio[category]))]
+            data,_ = librosa.load(path_data,sr=sr)
 
-        # Sampling
-        data_sed = librosa.effects.split(data,split_top_db)    
-        intv_chunk = data_sed[np.random.randint(len(data_sed))]
-        data = data[intv_chunk[0]:intv_chunk[1]]
+            # Sampling
+            data_sed = librosa.effects.split(data,split_top_db)    
+            intv_chunk = data_sed[np.random.randint(len(data_sed))]
+            data = data[intv_chunk[0]:intv_chunk[1]]
+
+            len_data = len(data)
         
         # normalization
         data = data/np.max(np.abs(data))
@@ -116,10 +120,16 @@ def spread_ratio(
         poss = int((1-ratio)/ratio*len(data))
         pad = int(0.5*poss + np.random.randint(poss)*pad_expand_ratio)
         
+        idx_end = occ+pad+len(data)
         # Can't = > Cut
-        if occ+pad+len(data) >= n_total_sample : 
-            data=data[:-((occ+pad+len(data)) -n_total_sample )]
+        if idx_end > n_total_sample : 
+            pad = 0
+            data = data[:n_total_sample-occ]
             is_enough=True
+
+        ## I don't know what to do
+        if len(data) == 0:
+            continue
             
         # scaling 
         if avg_energy_std is None :
@@ -155,7 +165,8 @@ def spread_amount(
     category,
     n_total_sample,
     sr=24000,
-    len_label_frame = 2400
+    len_label_frame = 2400,
+    split_top_db=25
     ):
 
     len_chunk = int(n_total_sample/amount)
@@ -168,27 +179,22 @@ def spread_amount(
     idx_last = 0
 
     for i_amount in range(amount) : 
-        # Load
-        path_data = list_audio[category][np.random.randint(len(list_audio[category]))]
-        data,_ = librosa.load(path_data,sr=sr)
+        len_data = 0
+        while len_data == 0 :
+            # Load
+            path_data = list_audio[category][np.random.randint(len(list_audio[category]))]
+            data,_ = librosa.load(path_data,sr=sr)
 
-        # Sampling
-        data_sed = librosa.effects.split(data,top_db=25)    
-        intv_chunk = data_sed[np.random.randint(len(data_sed))]
-        data = data[intv_chunk[0]:intv_chunk[1]]
-        
+            # Sampling
+            data_sed = librosa.effects.split(data,top_db=split_top_db)    
+            intv_chunk = data_sed[np.random.randint(len(data_sed))]
+            data = data[intv_chunk[0]:intv_chunk[1]]
+            
+            len_data = len(data)
+
         # normalization
         data = data/np.max(np.abs(data))
-    
-        # scaling 
-        if avg_energy_std is None :
-            avg_energy = np.mean(np.abs(data))
-            avg_energy_std  = avg_energy
-        else : 
-            avg_energy = np.mean(np.abs(data))
-            weight = avg_energy_std/(avg_energy)
-            data = data*weight
-    
+
         # interval
         idx_intv = i_amount*len_chunk
         
@@ -202,10 +208,23 @@ def spread_amount(
         if idx_last > idx_start :
             idx_intv = idx_last
         
-        
         # not enough space => cut
-        if idx_start + len(data) >= n_total_sample :
-            data = data[:-((idx_start+len(data) ) - n_total_sample)]
+        idx_end = idx_start + len(data)
+        if idx_end > n_total_sample :
+            data=data[:n_total_sample-idx_start]
+
+        ## I don't know what to do
+        if len(data) == 0:
+            continue
+
+        # scaling 
+        if avg_energy_std is None :
+            avg_energy = np.mean(np.abs(data))
+            avg_energy_std  = avg_energy
+        else : 
+            avg_energy = np.mean(np.abs(data))
+            weight = avg_energy_std/(avg_energy)
+            data = data*weight
         
         # Add
         raw[idx_start : idx_start + len(data)] = data
@@ -222,12 +241,21 @@ def spread_amount(
 
 
 def RIR_extract():
-    idx_rir = np.random.randint(0,high=len(list_rir))
-    path_rir = list_rir[idx_rir]
-    name_rir = path_rir.split('/')[-1]
+
 
     # rir : [n_traj,4,len_filter]
-    rir = np.load(path_rir)
+    
+    bool_loaded = False
+
+    while not bool_loaded :
+        try :
+            idx_rir = np.random.randint(0,high=len(list_rir))
+            path_rir = list_rir[idx_rir]
+            name_rir = path_rir.split('/')[-1]
+            rir = np.load(path_rir,allow_pickle=True)
+            bool_loaded=True
+        except :
+            bool_loaded=False
 
     # reduce reverb
     limit_reverb = np.random.randint(low=int(rir.shape[2]*0.2),high=int(rir.shape[2]*0.5))
@@ -240,6 +268,7 @@ def RIR_extract():
     return rir,limit_traj, name_rir
 
 def mix(idx_out):
+    np.random.seed(int.from_bytes(os.urandom(4), byteorder='little'))
 
     # for Multi-Processing
     import gpuRIR
@@ -323,7 +352,7 @@ def mix(idx_out):
         audio[:,:] += filtered
 
         # Labeling
-        DOA = np.load(os.path.join(root_doa,name_rir))
+        DOA = np.load(os.path.join(root_doa,name_rir),allow_pickle=True)
         DOA = DOA[:l_traj,:]
 
         len_traj_chunk = int((n_total_sample)/l_traj)
@@ -356,9 +385,11 @@ if __name__ == "__main__" :
 
     n = args.n_out
 
+#    for i in tqdm(range(n)):
+#        mix(i)
+
     num_cpu = cpu_count()
 
     arr = list(range(n))
     with Pool(num_cpu) as p:
         r = list(tqdm(p.imap(mix, arr), total=len(arr),ascii=True,desc='DCASE2022 extra synthesis'))
-
