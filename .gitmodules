@@ -1,3 +1,6 @@
 [submodule "src/utils"]
 	path = src/utils
 	url = https://github.com/koobh/ptUtils
+[submodule "data/gpuRIR"]
+	path = data/gpuRIR
+	url = https://github.com/kooBH/gpuRIR.git
