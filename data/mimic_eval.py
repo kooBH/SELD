@@ -12,8 +12,16 @@ from multiprocessing import Pool, cpu_count
 import warnings
 #warnings.filterwarnings('error') 
 """
+
+Frequent Issue : 
 return _methods._mean(a, axis=axis, dtype=dtype,                                      
 /home/kiosk/anaconda3/envs/dnn/lib/python3.9/site-packages/numpy/core/_methods.py:189: RuntimeWarning: invalid value encountered in true_divide
+
+=> 
+
+2022-06-04
+Currently using very brute exception control. 
+still 1 per 100 issue occurs. 
 """
 
 root_audio = "/home/data/kbh/DCASE2022/raw/"
