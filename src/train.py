@@ -6,17 +6,30 @@ import numpy as np
 
 from tensorboardX import SummaryWriter
 
-from model.Model import Model
 from Dataset import Dataset
 
 from utils.hparams import HParam
 from utils.writer import MyWriter
+from label import label2mACCDOA,mACCDOA2label
+from EINV2 import EINV2
+
+from SELDnet import MSELoss_ADPIT
 
 
-def run(data,model,criterion,ret_output=False): 
-    input = data['input'].to(device)
-    target = data['target'].to(device)
+def run(data,model,criterion,ret_output=False,format="mACCDOA",n_class=13,n_track=1,device="cuda:0"): 
+    input = data['data'].float().to(device)
+    label = data['label'].float()
+
+    n_frame = input.shape[2]
+
     output = model(input)
+    if format=="mACCDOA" : 
+        target = torch.zeros((label.shape[0],n_frame,n_track,n_class,3))
+        for i in range(label.shape[0]) : 
+            target[i,:,:,:,:] = label2mACCDOA(label[i,:n_frame,:,:],n_track=n_track)
+        target = target.to(device)
+    else :
+        raise Exception("ERROR::run::format not implemented : {}".format(format))
 
     loss = criterion(output,target).to(device)
 
@@ -33,21 +46,23 @@ if __name__ == '__main__':
                         help="version of current training")
     parser.add_argument('--chkpt',type=str,required=False,default=None)
     parser.add_argument('--step','-s',type=int,required=False,default=0)
+    parser.add_argument('--device','-d',type=str,required=False,default="cuda:0")
     args = parser.parse_args()
 
     hp = HParam(args.config)
     print("NOTE::Loading configuration : "+args.config)
 
-    device = hp.gpu
+    device = args.device
     version = args.version_name
     torch.cuda.set_device(device)
 
     batch_size = hp.train.batch_size
-    block = hp.model.Model.block
     num_epochs = hp.train.epoch
     num_workers = hp.train.num_workers
 
     best_loss = 1e7
+
+    n_track = hp.model.n_track
 
     ## load
 
@@ -61,17 +76,22 @@ if __name__ == '__main__':
 
     ## target
 
-    ## TODO
-
-    # TODO
-    train_dataset = DatasetModel(hp.data.root_train)
-    test_dataset= DatasetModel(hp.data.root_test)
+    train_dataset = Dataset(
+        hp.data.root_train,
+        specaug=hp.aug.specaug,
+        specaug_ratio=hp.aug.specaug_ratio
+        )
+    test_dataset= Dataset(hp.data.root_test)
 
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset,batch_size=batch_size,shuffle=True,num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset,batch_size=batch_size,shuffle=False,num_workers=num_workers)
 
     # TODO
-    model = ModelModel(hp).to(device)
+    model = EINV2(
+        n_track = n_track,
+        out_format=hp.model.format,
+        dropout=hp.model.dropout
+    ).to(device)
 
     if not args.chkpt == None : 
         print('NOTE::Loading pre-trained model : '+ args.chkpt)
@@ -104,11 +124,13 @@ if __name__ == '__main__':
         model.train()
         train_loss=0
         for i, (batch_data) in enumerate(train_loader):
-            step +=1
+            step +=batch_data["data"].shape[0]
             
-            # TODO
+            loss = run(batch_data,model,criterion,
+            n_track=n_track,
+            device = device
+            )
 
-            loss = run(batch_data,model,criterion)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -127,7 +149,10 @@ if __name__ == '__main__':
         with torch.no_grad():
             test_loss =0.
             for j, (batch_data) in enumerate(test_loader):
-                loss = run(batch_data,model,criterion)
+                loss = run(batch_data,model,criterion,
+                n_track=n_track,
+                device = device
+                )
                 test_loss += loss.item()
 
                 print('TEST::{} :  Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'.format(version, epoch+1, num_epochs, j+1, len(test_loader), loss.item()))

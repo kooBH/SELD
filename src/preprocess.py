@@ -103,13 +103,18 @@ name_config = args.config.split('/')[-1]
 id_config = name_config.split('.')[0]
 
 list_target = glob.glob(os.path.join(args.dir_audio,"*.wav"))
-print("{}".format(len(list_target)))
+#print("{}".format(len(list_target)))
 
 mel_wts = librosa.filters.mel(sr=hp.base.fs, n_fft=hp.base.n_fft, n_mels=hp.mel.n_mels)
 
 n_sample = hp.base.n_sample
 bin_cutoff = int(1)
 bin_bottom = int(2)
+
+list_feature=["STFT","IV","SALSA"]
+fs = hp.base.fs
+n_fft = hp.base.n_fft
+shift = hp.base.shift
 
 def process(idx):
     target_path = list_target[idx]
@@ -172,34 +177,74 @@ def process(idx):
         # mel
         mel = []
         for c in range(1) : 
-            mel.append(np.matmul(mel_wts,spec[c]))
+            mel.append(np.matmul(mel_wts,np.abs(spec[c])))
         mel = np.array(mel)
         #print("mel : {}".format(mel.shape))
 
         # Intensity Vector
 
         # Trasnpose for RNN process
-        spec = spec.T
+        spec = spec
         mel = np.transpose(mel,(0,2,1))
 
         #print("spec.T : {}".format(spec.shape))
 
-        IV =  get_foa_intensity_vectors(spec,mel_wts.T,hp.mel.n_mels)
+        IV =  get_foa_intensity_vectors(spec.T,mel_wts.T,hp.mel.n_mels)
 
         #print("mel : {}".format(mel.shape))
         #print("IV : {}".format(IV.shape))
 
+        base = np.concatenate((mel,IV))
+        #print("input : {}".format(base.shape))
+
+        mfcc = []
+        chroma_stft = []
+        spectral_centroid  = []
+        spectral_bandwidth = []
+        spectral_contrast  = []
+        spectral_flatness  = []
+
+        mag = np.abs(spec)
+        for c in range(n_channel) : 
+            mfcc.append(librosa.feature.mfcc(seg[c,:], sr=fs, n_mfcc=40, n_fft = n_fft,hop_length=shift))
+            chroma_stft.append(librosa.feature.chroma_stft(seg[c], sr=fs, n_fft = n_fft,hop_length=shift))
+
+            # 아래는 mag만 가능
+            spectral_centroid.append(librosa.feature.spectral_centroid(S=mag[c], sr=fs, n_fft = n_fft,hop_length=shift))
+
+            spectral_bandwidth.append(librosa.feature.spectral_bandwidth(S=mag[c], sr=fs, n_fft = n_fft,hop_length=shift))
+
+            spectral_contrast.append(librosa.feature.spectral_contrast(S=mag[c], sr=fs, n_fft = n_fft,hop_length=shift))
+
+            spectral_flatness.append(librosa.feature.spectral_flatness(S=mag[c], n_fft = n_fft,hop_length=shift))
+
+        mfcc = np.transpose(np.array(mfcc),(0,2,1))
+        chroma_stft = np.transpose(np.array(chroma_stft),(0,2,1))
+        spectral_centroid = np.transpose(np.array(spectral_centroid),(0,2,1))
+        spectral_bandwidth = np.transpose(np.array(spectral_bandwidth),(0,2,1))
+        spectral_contrast = np.transpose(np.array(spectral_contrast),(0,2,1))
+        spectral_flatness = np.transpose(np.array(spectral_flatness),(0,2,1))
+
+        #print("{}".format(mfcc.shape))
+        #print("{}".format(chroma_stft.shape))
+        #print("{}".format(spectral_centroid.shape))
+        #print("{}".format(spectral_bandwidth.shape))
+        #print("{}".format(spectral_contrast.shape))
+        #print("{}".format(spectral_flatness.shape))
 
         data = {}
-        data["mel"]=mel
-        data["IV"]=IV
+        # [4, T, F]
+        data["data"] = np.concatenate((base,mfcc,chroma_stft,spectral_centroid,spectral_bandwidth,spectral_contrast,spectral_flatness),axis=-1)
         data["label"]=tmp_label
+
+
+        #print("data : {}".format(data.shape))
 
         # save
         if target_id[4] in ["4"] : 
-            torch.save(data,os.path.join(args.dir_out,id_config,"test",target_id+"_"+str(idx_seg)+'_.pt'))
+            torch.save(data,os.path.join(args.dir_out,id_config,"test",target_id+"_"+str(idx_seg)+'.pt'))
         else :
-            torch.save(data,os.path.join(args.dir_out,id_config,"train",target_id+"_"+str(idx_seg)+'_.pt'))
+            torch.save(data,os.path.join(args.dir_out,id_config,"train",target_id+"_"+str(idx_seg)+'.pt'))
         idx_seg +=n_sample
 
 if __name__=="__main__":
@@ -212,9 +257,8 @@ if __name__=="__main__":
     os.makedirs(os.path.join(args.dir_out,id_config,"test"),exist_ok=True)
 
     ## MP
-    cpu_num = cpu_count()
+    cpu_num = int(cpu_count()/2)
 
     arr = list(range(len(list_target)))
     with Pool(cpu_num) as p:
         r = list(tqdm(p.imap(process, arr), total=len(arr),ascii=True,desc='processing'))
-

@@ -1,6 +1,7 @@
 import librosa
 import numpy as np
 import soundfile as sf 
+import random
 
 import os,glob
 import pandas as pd
@@ -8,6 +9,8 @@ import pandas as pd
 import argparse
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
+
+import pickle
 
 import warnings
 #warnings.filterwarnings('error') 
@@ -24,10 +27,15 @@ Currently using very brute exception control.
 still 1 per 100 issue occurs. 
 """
 
+## Use Japanese And English Only
+JPEN=True
+
 root_audio = "/home/data/kbh/DCASE2022/raw/"
 root_rir = "/home/data/kbh/DCASE2022/TAU-SRIR_DB_split/"
 root_doa = "/home/data/kbh/DCASE2022/TAU-SRIR_DB_DOA/"
 root_output = "/home/nas3/DB/DCASE2022/extra-synth/"
+
+
 
 idx_shift = 1 # Due to label issue
 config = [
@@ -60,6 +68,7 @@ dist = [
     ("Knock", 15) 
 ]
 
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--dir_out','-o',type=str,required=True)
 parser.add_argument('--n_out','-n',type=int,required=True)
@@ -88,6 +97,34 @@ sr = 24000
 len_sec = 60.0
 n_total_sample = int(sr*len_sec)
 
+# JP & EN
+if JPEN : 
+
+    with open('vox1_gender_path.pkl', 'rb') as f:
+        vox_data = pickle.load(f)
+
+    root_jp_male = "/home/nas3/DB/CSS10/Japanese/meian/"
+    root_jp_female = "/home/nas3/DB/JSUT/"
+
+    list_jp_male = [x for x in glob.glob(os.path.join(root_jp_male,"**","*.wav"),recursive=True)]
+    list_jp_female = [x for x in glob.glob(os.path.join(root_jp_female,"**","*.wav"),recursive=True)]
+
+    list_vox_male = []
+    list_vox_female = []
+
+    for path_male in vox_data["male"] : 
+        list_vox_male += [x for x in glob.glob(os.path.join(path_male,"**","*.wav"),recursive=True)]
+
+
+    for path_female in vox_data["female"] : 
+        list_vox_female += [x for x in glob.glob(os.path.join(path_female,"**","*.wav"),recursive=True)]
+
+    random.shuffle(list_vox_male)
+    random.shuffle(list_vox_female)
+
+    list_audio[0] = list_jp_female + list_vox_female[:len(list_jp_female)]
+    list_audio[1] = list_jp_male + list_vox_male[:len(list_jp_male)]
+
 def spread_ratio(
     ratio, 
     category,
@@ -112,6 +149,9 @@ def spread_ratio(
             # Load
             path_data = list_audio[category][np.random.randint(len(list_audio[category]))]
             data,_ = librosa.load(path_data,sr=sr)
+        
+            # normalization
+            data = data/(np.max(np.abs(data))+1e-13)
 
             # Sampling
             data_sed = librosa.effects.split(data,split_top_db)    
@@ -121,12 +161,12 @@ def spread_ratio(
             len_data = len(data)
         
         # normalization
-        data = data/np.max(np.abs(data))
+        data = data/(np.max(np.abs(data))+1e-13)
     
         # Padding
         avail = n_total_sample - occ
         poss = int((1-ratio)/ratio*len(data))
-        pad = int(0.5*poss + np.random.randint(poss)*pad_expand_ratio)
+        pad = int(0.5*poss + np.random.randint(np.max((poss,1)))*pad_expand_ratio)
         
         idx_end = occ+pad+len(data)
         # Can't = > Cut
@@ -192,6 +232,9 @@ def spread_amount(
             # Load
             path_data = list_audio[category][np.random.randint(len(list_audio[category]))]
             data,_ = librosa.load(path_data,sr=sr)
+        
+            # normalization
+            data = data/(np.max(np.abs(data))+1e-13)
 
             # Sampling
             data_sed = librosa.effects.split(data,top_db=split_top_db)    
@@ -201,7 +244,8 @@ def spread_amount(
             len_data = len(data)
 
         # normalization
-        data = data/np.max(np.abs(data))
+        data = data/(np.max(np.abs(data))+1e-13)
+
 
         # interval
         idx_intv = i_amount*len_chunk
@@ -239,7 +283,6 @@ def spread_amount(
         idx_last = idx_start + len(data)
         # Label
         label[int(idx_start/2400): int((idx_start + len(data))/2400)] = category
-        
         
     normalization_coef = np.max(np.abs(raw))
     normalized_avg_energy = avg_energy_std/(normalization_coef)
@@ -397,6 +440,8 @@ if __name__ == "__main__" :
 #        mix(i)
 
     num_cpu = cpu_count()
+    for i in range(len(list_audio)):
+        print("list_audio[{}] : {}".format(i,len(list_audio[i])))
 
     arr = list(range(n))
     with Pool(num_cpu) as p:
